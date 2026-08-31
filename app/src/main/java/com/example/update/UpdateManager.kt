@@ -64,6 +64,15 @@ class UpdateManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Main)
 
     /**
+     * Helper to get the download directory and APK file.
+     */
+    fun getDownloadedApkFile(): File {
+        val baseDir = context.externalCacheDir ?: context.cacheDir
+        val outputDir = File(baseDir, "updates")
+        return File(outputDir, "update.apk")
+    }
+
+    /**
      * Checks a GitHub repository's latest release for updates.
      */
     fun checkForUpdates(owner: String, repo: String, currentVersion: String) {
@@ -169,6 +178,17 @@ class UpdateManager(private val context: Context) {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
+
+            try {
+                val resolveInfos = context.packageManager.queryIntentActivities(intent, 0)
+                for (resolveInfo in resolveInfos) {
+                    val packageName = resolveInfo.activityInfo.packageName
+                    context.grantUriPermission(packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to grant URI permissions explicitly", e)
+            }
+
             context.startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Error installing APK", e)
@@ -248,12 +268,12 @@ class UpdateManager(private val context: Context) {
             val fileLength = connection.contentLength
             val input = BufferedInputStream(connection.inputStream)
             
-            // Save to internal cache directory / files directory to bypass permission issues
-            val outputDir = File(context.cacheDir, "updates")
-            if (!outputDir.exists()) {
+            // Save to external/internal cache directory to bypass permission issues on various custom car ROMs
+            val apkFile = getDownloadedApkFile()
+            val outputDir = apkFile.parentFile
+            if (outputDir != null && !outputDir.exists()) {
                 outputDir.mkdirs()
             }
-            val apkFile = File(outputDir, "update.apk")
             if (apkFile.exists()) {
                 apkFile.delete()
             }

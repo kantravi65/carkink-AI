@@ -924,10 +924,11 @@ fun DashboardScreen(
                                     ) {
                                         Text("Download & Install", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
-                                } else if (updateManager.state == UpdateState.DOWNLOADED) {
+                                } else if (updateManager.state == UpdateState.DOWNLOADED || 
+                                    (updateManager.state == UpdateState.ERROR && updateManager.getDownloadedApkFile().exists())) {
                                     Button(
                                         onClick = {
-                                            val apkFile = File(context.cacheDir, "updates/update.apk")
+                                            val apkFile = updateManager.getDownloadedApkFile()
                                             if (apkFile.exists()) {
                                                 updateManager.installApk(apkFile)
                                             }
