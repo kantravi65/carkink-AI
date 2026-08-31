@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
@@ -8,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -25,6 +27,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.voice.LocalCommandParser
@@ -37,15 +41,18 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
 
-// Simple Palette
+// Styled Dark Car Theme Palette
 val CarBlack = Color(0xFF0C0C0F)
 val CarObsidian = Color(0xFF141419)
+val CarPanelBackground = Color(0xFF1C1D24)
 val CyanGlow = Color(0xFF00E5FF)
 val AssistantPurple = Color(0xFFB066FF)
 val AssistantBlue = Color(0xFF4285F4)
 val DarkGray = Color(0xFF23232C)
 val LightText = Color(0xFFECECEC)
 val MutedText = Color(0xFF9094A0)
+val WarningYellow = Color(0xFFFFB300)
+val SuccessGreen = Color(0xFF00E676)
 
 enum class AssistantState {
     IDLE, LISTENING, PROCESSING, SPEAKING
@@ -70,17 +77,44 @@ fun DashboardScreen(
     var permissionsGranted by remember { mutableStateOf(false) }
     var showSetupDialog by remember { mutableStateOf(false) }
 
+    val navState by navigationManager.navState.collectAsState()
+    val mediaState by mediaManager.mediaState.collectAsState()
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         permissionsGranted = results[Manifest.permission.RECORD_AUDIO] == true
+        val locationGranted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true || 
+                              results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (locationGranted) {
+            navigationManager.enableRealGps()
+        }
     }
 
     LaunchedEffect(Unit) {
-        permissionsGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+        val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        
+        val hasLocation = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        
+        permissionsGranted = hasMic
+        if (hasLocation) {
+            navigationManager.enableRealGps()
+        } else {
+            // Prompt for all relevant car permissions
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
     }
 
     fun executeParsedCommand(commandText: String) {
@@ -122,7 +156,13 @@ fun DashboardScreen(
 
     fun triggerVoiceListening() {
         if (!permissionsGranted) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
             return
         }
 
@@ -156,21 +196,29 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(CarObsidian)
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.DirectionsCar, "Car Logo", tint = CyanGlow, modifier = Modifier.size(24.dp))
-                    Text("CAR LINK AI ASSISTANT", color = LightText, fontSize = 16.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Icon(Icons.Default.DirectionsCar, "Car Logo", tint = CyanGlow, modifier = Modifier.size(28.dp))
+                    Column {
+                        Text(
+                            "AMBRANE CAR LINK INTEGRATION", 
+                            color = LightText, 
+                            fontSize = 15.sp, 
+                            fontWeight = FontWeight.Bold, 
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            if (navState.isRealGpsActive) "REAL-TIME TELEMETRY CONNECTED" else "GPS SIMULATION ACTIVE (No Location Permission)", 
+                            color = if (navState.isRealGpsActive) SuccessGreen else WarningYellow, 
+                            fontSize = 10.sp, 
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (permissionsGranted) Icons.Default.Mic else Icons.Default.MicOff,
-                        contentDescription = "Mic Indicator",
-                        tint = if (permissionsGranted) CyanGlow else MutedText,
-                        modifier = Modifier.size(24.dp)
-                    )
                     IconButton(onClick = { showSetupDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.Settings,
@@ -183,226 +231,455 @@ fun DashboardScreen(
             }
         }
     ) { paddingValues ->
-        Column(
+        // Split-screen Landscape optimized layout
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
                 .background(CarBlack)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Main Mic Button
-            Box(
+            // Module 1: AI Assistant & Microphone (Left Panel - 35% weight)
+            Column(
                 modifier = Modifier
-                    .size(140.dp)
-                    .clip(CircleShape)
-                    .background(DarkGray)
-                    .clickable { triggerVoiceListening() }
-                    .testTag("voice_trigger_button"),
-                contentAlignment = Alignment.Center
+                    .weight(0.35f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(CarPanelBackground)
+                    .border(1.dp, DarkGray, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                val pulseScale by infiniteTransition.animateFloat(
-                    initialValue = 1f,
-                    targetValue = if (assistantState == AssistantState.LISTENING) 1.5f else 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(800, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "scale"
+                Text(
+                    "AI ASSISTANT", 
+                    color = MutedText, 
+                    fontSize = 12.sp, 
+                    fontWeight = FontWeight.Bold, 
+                    letterSpacing = 0.5.sp
                 )
 
+                // Large central voice button with glowing animation
                 Box(
                     modifier = Modifier
-                        .size(100.dp)
-                        .drawBehind {
-                            if (assistantState == AssistantState.LISTENING) {
-                                drawCircle(color = CyanGlow.copy(alpha = 0.35f), radius = size.minDimension / 1.5f * pulseScale)
-                            } else if (assistantState == AssistantState.PROCESSING) {
-                                drawCircle(color = AssistantPurple.copy(alpha = 0.35f), radius = size.minDimension / 1.5f * pulseScale)
-                            }
-                        }
+                        .size(110.dp)
                         .clip(CircleShape)
-                        .background(
-                            when (assistantState) {
-                                AssistantState.LISTENING -> CyanGlow
-                                AssistantState.PROCESSING -> AssistantPurple
-                                AssistantState.SPEAKING -> AssistantBlue
-                                else -> MutedText
-                            }
-                        ),
+                        .background(DarkGray)
+                        .clickable { triggerVoiceListening() }
+                        .testTag("voice_trigger_button"),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = when (assistantState) {
-                            AssistantState.LISTENING -> Icons.Default.SettingsVoice
-                            AssistantState.PROCESSING -> Icons.Default.QueryStats
-                            AssistantState.SPEAKING -> Icons.Default.VolumeUp
-                            else -> Icons.Default.Mic
+                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                    val pulseScale by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = if (assistantState == AssistantState.LISTENING) 1.35f else 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(800, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "scale"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .size(80.dp)
+                            .drawBehind {
+                                if (assistantState == AssistantState.LISTENING) {
+                                    drawCircle(color = CyanGlow.copy(alpha = 0.35f), radius = size.minDimension / 1.5f * pulseScale)
+                                } else if (assistantState == AssistantState.PROCESSING) {
+                                    drawCircle(color = AssistantPurple.copy(alpha = 0.35f), radius = size.minDimension / 1.5f * pulseScale)
+                                }
+                            }
+                            .clip(CircleShape)
+                            .background(
+                                when (assistantState) {
+                                    AssistantState.LISTENING -> CyanGlow
+                                    AssistantState.PROCESSING -> AssistantPurple
+                                    AssistantState.SPEAKING -> AssistantBlue
+                                    else -> MutedText
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = when (assistantState) {
+                                AssistantState.LISTENING -> Icons.Default.SettingsVoice
+                                AssistantState.PROCESSING -> Icons.Default.QueryStats
+                                AssistantState.SPEAKING -> Icons.Default.VolumeUp
+                                else -> Icons.Default.Mic
+                            },
+                            contentDescription = "Voice Button State",
+                            tint = CarBlack,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                }
+
+                // Voice text
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = if (voiceTranscript.isNotBlank()) "\"$voiceTranscript\"" else "Press to speak",
+                        color = if (assistantState == AssistantState.LISTENING) CyanGlow else LightText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = geminiReplyText,
+                        color = if (assistantState == AssistantState.SPEAKING) CyanGlow else MutedText,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Fallback direct text input
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    TextField(
+                        value = commandInputText,
+                        onValueChange = { commandInputText = it },
+                        placeholder = { Text("Type command...", fontSize = 11.sp, color = MutedText) },
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        textStyle = TextStyle(fontSize = 12.sp, color = LightText),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = DarkGray,
+                            unfocusedContainerColor = DarkGray,
+                            focusedTextColor = LightText,
+                            unfocusedTextColor = LightText,
+                            cursorColor = CyanGlow,
+                            focusedIndicatorColor = CyanGlow,
+                            unfocusedIndicatorColor = Color.Transparent
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    IconButton(
+                        onClick = {
+                            if (commandInputText.isNotBlank()) {
+                                voiceTranscript = commandInputText
+                                executeParsedCommand(commandInputText)
+                                commandInputText = ""
+                            }
                         },
-                        contentDescription = "Mic State",
-                        tint = CarBlack,
-                        modifier = Modifier.size(48.dp)
-                    )
+                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(CyanGlow)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Send",
+                            tint = CarBlack,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = if (voiceTranscript.isNotBlank()) "\"$voiceTranscript\"" else "Awaiting your voice command...",
-                color = if (assistantState == AssistantState.LISTENING) CyanGlow else MutedText,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = geminiReplyText,
-                color = if (assistantState == AssistantState.SPEAKING) CyanGlow else LightText,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Simplified setup buttons
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(
-                    onClick = {
-                        try {
-                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                        } catch (e: Exception) {
-                            // Do nothing
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText)
-                ) {
-                    Text("1. Open Device Settings")
-                }
-                
-                Button(
-                    onClick = {
-                        try {
-                            // Using a direct component intent for common Android TV/Car boxes if generic fails
-                            val intent = Intent().apply {
-                                setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity")
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            try {
-                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                            } catch (e2: Exception) {
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = CyanGlow, contentColor = CarBlack)
-                ) {
-                    Text("2. Open Accessibility (For Wheel Fix)")
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Row(
+            // Module 2: GPS Telemetry & Instruments (Center Panel - 35% weight)
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.6f)
-                    .padding(top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .weight(0.35f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(CarPanelBackground)
+                    .border(1.dp, DarkGray, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                TextField(
-                    value = commandInputText,
-                    onValueChange = { commandInputText = it },
-                    placeholder = { Text("Type voice command (fallback)...", fontSize = 14.sp, color = MutedText) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    textStyle = TextStyle(fontSize = 14.sp, color = LightText),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = DarkGray,
-                        unfocusedContainerColor = DarkGray,
-                        focusedTextColor = LightText,
-                        unfocusedTextColor = LightText,
-                        cursorColor = CyanGlow,
-                        focusedIndicatorColor = CyanGlow,
-                        unfocusedIndicatorColor = Color.Transparent
-                    ),
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp)
+                Text(
+                    "INSTRUMENT CLUSTER", 
+                    color = MutedText, 
+                    fontSize = 12.sp, 
+                    fontWeight = FontWeight.Bold, 
+                    letterSpacing = 0.5.sp
                 )
-                IconButton(
-                    onClick = {
-                        if (commandInputText.isNotBlank()) {
-                            voiceTranscript = commandInputText
-                            executeParsedCommand(commandInputText)
-                            commandInputText = ""
-                        }
-                    },
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(CyanGlow)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Send Command",
-                        tint = CarBlack,
-                        modifier = Modifier.size(24.dp)
+
+                // Highly visible modern digital Speedometer
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${navState.speedKmh}",
+                        color = if (navState.isRealGpsActive) CyanGlow else WarningYellow,
+                        fontSize = 56.sp,
+                        fontWeight = FontWeight.Bold
                     )
+                    Text(
+                        text = "KM/H",
+                        color = LightText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp
+                    )
+                    Text(
+                        text = if (navState.isRealGpsActive) "LIVE GPS TELEMETRY" else "SIMULATED TELEMETRY",
+                        color = if (navState.isRealGpsActive) SuccessGreen else MutedText,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // Physical Telemetry reading from actual sensors
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(DarkGray, RoundedCornerShape(8.dp)).padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Text("GPS Latitude", color = MutedText, fontSize = 10.sp)
+                        Text(if (navState.isRealGpsActive) "%.5f".format(navState.latitude) else "Cruising...", color = LightText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Text("GPS Longitude", color = MutedText, fontSize = 10.sp)
+                        Text(if (navState.isRealGpsActive) "%.5f".format(navState.longitude) else "Cruising...", color = LightText, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Text("GPS Accuracy", color = MutedText, fontSize = 10.sp)
+                        Text(if (navState.isRealGpsActive) "%.1f m".format(navState.accuracy) else "No Satellite Signal", color = if (navState.isRealGpsActive) SuccessGreen else WarningYellow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Active Location Address/Road Text Info
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                ) {
+                    Icon(Icons.Default.Navigation, "Road Icon", tint = CyanGlow, modifier = Modifier.size(16.dp))
+                    Text(
+                        text = navState.currentRoad,
+                        color = LightText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Module 3: Control Deck & Shortcut Apps (Right Panel - 30% weight)
+            Column(
+                modifier = Modifier
+                    .weight(0.30f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(CarPanelBackground)
+                    .border(1.dp, DarkGray, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "CONTROL DECK", 
+                    color = MutedText, 
+                    fontSize = 12.sp, 
+                    fontWeight = FontWeight.Bold, 
+                    letterSpacing = 0.5.sp
+                )
+
+                // Current playing track
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(DarkGray, RoundedCornerShape(8.dp)).padding(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = mediaState.currentTrack,
+                        color = LightText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = mediaState.artistName,
+                        color = MutedText,
+                        fontSize = 10.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
+
+                // Quick Launcher Action Shortcuts
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { navigationManager.launchGoogleMaps(navState.destination ?: "Near me") },
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Map, "Maps", modifier = Modifier.size(16.dp), tint = CyanGlow)
+                            Text("Open Google Maps", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Button(
+                        onClick = { mediaManager.launchYouTubeSearch("Play standard background music") },
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.PlayArrow, "YouTube", modifier = Modifier.size(16.dp), tint = AssistantPurple)
+                            Text("Open YouTube Music", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Button(
+                        onClick = { showSetupDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanGlow, contentColor = CarBlack),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Settings, "Setup", modifier = Modifier.size(16.dp))
+                            Text("Accessibility Setup", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
     }
 
+    // Advanced Troubleshooting Settings Dialog
     if (showSetupDialog) {
-        androidx.compose.material3.AlertDialog(
+        AlertDialog(
             onDismissRequest = { showSetupDialog = false },
             containerColor = CarObsidian,
             titleContentColor = LightText,
             textContentColor = LightText,
             title = {
-                Text("Device Setup / Fix Wheel Button")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Settings, "Settings", tint = CyanGlow)
+                    Text("Infotainment Setup Helper", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Ambrane devices often hijack standard Android settings. Use these buttons to force-open the menus.",
+                        "Many custom vehicle platforms like Ambrane override system intents or hide Accessibility menus. Try these buttons sequentially to bypass the locked firmware:",
                         fontSize = 12.sp,
                         color = MutedText
                     )
-                    androidx.compose.material3.Button(
+                    
+                    // Button 1: Force Direct Settings Activity via Explicit Intent
+                    Button(
                         onClick = {
                             try {
-                                val intent = Intent()
-                                intent.setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity")
-                                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                val intent = Intent().apply {
+                                    setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity")
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
                                 context.startActivity(intent)
                             } catch (e: Exception) {
                                 try {
-                                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                                } catch(e2: Exception) {}
+                                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e2: Exception) {
+                                    // Fallback to standard settings
+                                    try {
+                                        context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
+                                    } catch (e3: Exception) {}
+                                }
                             }
                         },
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = CyanGlow, contentColor = CarBlack),
-                        modifier = Modifier.fillMaxWidth()
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanGlow, contentColor = CarBlack),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("1. Force Hidden Accessibility")
+                        Text("1. Force Direct Accessibility", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
-                    androidx.compose.material3.Button(
+
+                    // Button 2: Standard Accessibility Settings (Fallback)
+                    Button(
                         onClick = {
                             try {
-                                context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                try {
+                                    context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
+                                } catch (e2: Exception) {}
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("2. Standard Accessibility Intent", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // Button 3: Automotive Car Settings Specific (For Android Auto/Car OS units)
+                    Button(
+                        onClick = {
+                            try {
+                                val intent = Intent("android.settings.car.EXTRA_SETTINGS").apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                try {
+                                    val intent = Intent().apply {
+                                        setClassName("com.android.car.settings", "com.android.car.settings.Settings\$AccessibilitySettingsActivity")
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e2: Exception) {
+                                    try {
+                                        context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
+                                    } catch (e3: Exception) {}
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("3. Automotive Settings Fallback", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // Button 4: General Settings Intent
+                    Button(
+                        onClick = {
+                            try {
+                                val intent = Intent(Settings.ACTION_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
                             } catch (e: Exception) {}
                         },
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
-                        modifier = Modifier.fillMaxWidth()
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("2. Open Main Settings")
+                        Text("4. Open Standard Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
+
+                    Divider(color = DarkGray, thickness = 1.dp)
+
+                    Text(
+                        "Note: Once inside, activate 'VoiceKeyService' to allow steering wheel buttons and YouTube ad-skipping integration.",
+                        fontSize = 11.sp,
+                        color = WarningYellow
+                    )
                 }
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { showSetupDialog = false }) {
-                    Text("Close", color = CyanGlow)
+                TextButton(onClick = { showSetupDialog = false }) {
+                    Text("Done", color = CyanGlow, fontWeight = FontWeight.Bold)
                 }
             }
         )

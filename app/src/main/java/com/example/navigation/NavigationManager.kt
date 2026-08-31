@@ -3,6 +3,10 @@ package com.example.navigation
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Bundle
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +29,12 @@ data class NavState(
     val progress: Float = 0f, // 0.0 to 1.0 along the path
     val eta: String = "--:--",
     val coordinates: List<Offset> = emptyList(), // Simulated road points
-    val carPosition: Offset = Offset(0f, 0f)
+    val carPosition: Offset = Offset(0f, 0f),
+    val isRealGpsActive: Boolean = false,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val altitude: Double = 0.0,
+    val accuracy: Float = 0f
 )
 
 class NavigationManager(private val context: Context) {
@@ -34,6 +43,9 @@ class NavigationManager(private val context: Context) {
 
     private var simulationJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main)
+
+    private var locationManager: LocationManager? = null
+    private var locationListener: LocationListener? = null
 
     private val sampleRoads = listOf(
         "Grand Trunk Road", "Outer Ring Road", "Connaught Place Bypass",
@@ -46,15 +58,95 @@ class NavigationManager(private val context: Context) {
         startCruising()
     }
 
+    fun enableRealGps() {
+        try {
+            locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            if (locationManager == null) return
+
+            locationListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    val speedInKmh = if (location.hasSpeed()) {
+                        (location.speed * 3.6).toInt()
+                    } else {
+                        -1
+                    }
+                    _navState.update { state ->
+                        state.copy(
+                            isRealGpsActive = true,
+                            speedKmh = if (speedInKmh >= 0) speedInKmh else state.speedKmh,
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            altitude = location.altitude,
+                            accuracy = location.accuracy
+                        )
+                    }
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {
+                    if (provider == LocationManager.GPS_PROVIDER) {
+                        _navState.update { it.copy(isRealGpsActive = false) }
+                    }
+                }
+            }
+
+            // Register for updates under both GPS and Network providers
+            val providers = locationManager!!.getProviders(true)
+            for (provider in providers) {
+                locationManager?.requestLocationUpdates(
+                    provider,
+                    1000L, // every 1s
+                    1.0f,  // 1m
+                    locationListener!!
+                )
+            }
+            
+            // Immediately query last known location to pre-populate
+            val lastKnown = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if (lastKnown != null) {
+                val speedInKmh = if (lastKnown.hasSpeed()) (lastKnown.speed * 3.6).toInt() else -1
+                _navState.update { state ->
+                    state.copy(
+                        isRealGpsActive = true,
+                        latitude = lastKnown.latitude,
+                        longitude = lastKnown.longitude,
+                        altitude = lastKnown.altitude,
+                        accuracy = lastKnown.accuracy,
+                        speedKmh = if (speedInKmh >= 0) speedInKmh else state.speedKmh
+                    )
+                }
+            }
+        } catch (e: SecurityException) {
+            android.util.Log.e("NavigationManager", "Location permissions missing for GPS integration", e)
+        } catch (e: Exception) {
+            android.util.Log.e("NavigationManager", "Error starting GPS updates", e)
+        }
+    }
+
+    fun disableRealGps() {
+        try {
+            locationListener?.let {
+                locationManager?.removeUpdates(it)
+            }
+            _navState.update { it.copy(isRealGpsActive = false) }
+        } catch (e: Exception) {
+            android.util.Log.e("NavigationManager", "Error stopping GPS updates", e)
+        }
+    }
+
     fun startCruising() {
         simulationJob?.cancel()
-        _navState.value = NavState(
-            destination = null,
-            isNavigating = false,
-            currentRoad = "Cruising on " + sampleRoads.random(),
-            speedKmh = 55,
-            coordinates = generateRandomPath(Offset(100f, 100f), Offset(400f, 300f))
-        )
+        _navState.update {
+            it.copy(
+                destination = null,
+                isNavigating = false,
+                currentRoad = "Cruising on " + sampleRoads.random(),
+                coordinates = generateRandomPath(Offset(100f, 100f), Offset(400f, 300f))
+            )
+        }
 
         simulationJob = scope.launch {
             var progress = 0f
@@ -63,7 +155,6 @@ class NavigationManager(private val context: Context) {
                 progress += 0.02f
                 if (progress > 1f) {
                     progress = 0f
-                    // Change road
                     _navState.update {
                         it.copy(
                             currentRoad = "Cruising on " + sampleRoads.random(),
@@ -77,7 +168,7 @@ class NavigationManager(private val context: Context) {
                     state.copy(
                         progress = progress,
                         carPosition = pos,
-                        speedKmh = (50..65).random()
+                        speedKmh = if (state.isRealGpsActive) state.speedKmh else (50..65).random()
                     )
                 }
             }
@@ -87,7 +178,6 @@ class NavigationManager(private val context: Context) {
     fun navigateTo(destination: String) {
         simulationJob?.cancel()
 
-        // Generate coordinates for the simulated route
         val start = Offset(100f, 400f)
         val end = Offset(600f, 100f)
         val route = generateRandomPath(start, end)
@@ -99,7 +189,7 @@ class NavigationManager(private val context: Context) {
                 destination = destination,
                 isNavigating = true,
                 currentRoad = sampleRoads.random(),
-                speedKmh = 72,
+                speedKmh = if (it.isRealGpsActive) it.speedKmh else 72,
                 remainingDistanceKm = Math.round(initialDist * 10) / 10.0,
                 remainingTimeMin = initialTime,
                 progress = 0f,
@@ -115,8 +205,8 @@ class NavigationManager(private val context: Context) {
             val totalTime = initialTime
             
             while (currentProgress < 1.0f) {
-                delay(1000) // update every second
-                currentProgress += 0.015f // travel speed
+                delay(1000)
+                currentProgress += 0.015f
                 if (currentProgress > 1f) currentProgress = 1f
 
                 val distanceLeft = Math.round((totalDistance * (1f - currentProgress)) * 10) / 10.0
@@ -138,23 +228,22 @@ class NavigationManager(private val context: Context) {
                         remainingTimeMin = timeLeft,
                         carPosition = nextPos,
                         currentRoad = nextRoad,
-                        speedKmh = if (currentProgress > 0.9f) 30 else (65..85).random()
+                        speedKmh = if (state.isRealGpsActive) state.speedKmh else if (currentProgress > 0.9f) 30 else (65..85).random()
                     )
                 }
             }
 
-            // Arrived
             _navState.update {
                 it.copy(
                     currentRoad = "Arrived at $destination",
                     remainingDistanceKm = 0.0,
                     remainingTimeMin = 0,
-                    speedKmh = 0,
+                    speedKmh = if (it.isRealGpsActive) it.speedKmh else 0,
                     isNavigating = false
                 )
             }
             delay(5000)
-            startCruising() // Go back to scenic cruising
+            startCruising()
         }
     }
 
@@ -167,7 +256,6 @@ class NavigationManager(private val context: Context) {
             context.startActivity(mapIntent)
         } catch (e: Exception) {
             try {
-                // Fallback: Open in web browser
                 val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=" + Uri.encode(destination))).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
@@ -189,7 +277,6 @@ class NavigationManager(private val context: Context) {
         val points = mutableListOf<Offset>()
         points.add(start)
         
-        // Generate intermediate zigzag/curved road points
         val numPoints = 4
         val dx = (end.x - start.x) / (numPoints + 1)
         val dy = (end.y - start.y) / (numPoints + 1)
