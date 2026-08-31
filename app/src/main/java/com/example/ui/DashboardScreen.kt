@@ -63,6 +63,13 @@ enum class AssistantState {
     IDLE, LISTENING, PROCESSING, SPEAKING
 }
 
+data class BypassOption(
+    val id: Int,
+    val title: String,
+    val description: String,
+    val buildIntent: () -> Intent
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
@@ -84,43 +91,6 @@ fun DashboardScreen(
 
     val navState by navigationManager.navState.collectAsState()
     val mediaState by mediaManager.mediaState.collectAsState()
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        permissionsGranted = results[Manifest.permission.RECORD_AUDIO] == true
-        val locationGranted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true || 
-                              results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (locationGranted) {
-            navigationManager.enableRealGps()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        
-        val hasLocation = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        
-        permissionsGranted = hasMic
-        if (hasLocation) {
-            navigationManager.enableRealGps()
-        } else {
-            // Prompt for all relevant car permissions
-            permissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.RECORD_AUDIO,
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
-        }
-    }
 
     fun executeParsedCommand(commandText: String) {
         if (commandText.isBlank()) return
@@ -159,6 +129,62 @@ fun DashboardScreen(
         }
     }
 
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        permissionsGranted = results[Manifest.permission.RECORD_AUDIO] == true
+        val locationGranted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true || 
+                              results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (locationGranted) {
+            navigationManager.enableRealGps()
+        }
+    }
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
+            if (!matches.isNullOrEmpty()) {
+                val text = matches[0]
+                voiceTranscript = text
+                executeParsedCommand(text)
+            } else {
+                voiceTranscript = "Failed: No speech recognized"
+                assistantState = AssistantState.IDLE
+            }
+        } else {
+            voiceTranscript = "Speech canceled"
+            assistantState = AssistantState.IDLE
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        
+        val hasLocation = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        
+        permissionsGranted = hasMic
+        if (hasLocation) {
+            navigationManager.enableRealGps()
+        } else {
+            // Prompt for all relevant car permissions
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
     fun triggerVoiceListening() {
         if (!permissionsGranted) {
             permissionLauncher.launch(
@@ -179,8 +205,29 @@ fun DashboardScreen(
                 executeParsedCommand(result)
             },
             onError = { err ->
-                assistantState = AssistantState.IDLE
-                voiceTranscript = "Failed: $err"
+                // Fallback to standard on-screen pop-up activity if background SpeechRecognizer is unavailable or blocked
+                if (err.contains("unavailable", ignoreCase = true) || 
+                    err.contains("notice", ignoreCase = true) || 
+                    err.contains("busy", ignoreCase = true) ||
+                    err.contains("Client-side", ignoreCase = true)
+                ) {
+                    try {
+                        android.util.Log.i("DashboardScreen", "Background SpeechRecognizer failed. Attempting standard system activity fallback...")
+                        val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, java.util.Locale.getDefault().toString())
+                            putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Speak your command now (e.g. 'Navigate to airport')")
+                        }
+                        speechLauncher.launch(intent)
+                    } catch (e: Exception) {
+                        android.util.Log.e("DashboardScreen", "System Voice activity fallback failed", e)
+                        assistantState = AssistantState.IDLE
+                        voiceTranscript = "Voice Input Service is completely unavailable on this device. Please type commands below!"
+                    }
+                } else {
+                    assistantState = AssistantState.IDLE
+                    voiceTranscript = "Failed: $err"
+                }
             },
             onPartialResult = { partial ->
                 voiceTranscript = partial
@@ -732,76 +779,92 @@ fun DashboardScreen(
 
                             val bypassOptions = remember {
                                 listOf(
-                                    Triple(
-                                        "1. Standard Settings",
-                                        Intent(Settings.ACTION_SETTINGS),
-                                        "Open main system configurations."
-                                    ),
-                                    Triple(
-                                        "2. Standard Accessibility",
-                                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
-                                        "Enable VoiceKeyService for steering controls and ad-skipping."
-                                    ),
-                                    Triple(
-                                        "3. Explicit Main Route",
-                                        Intent().apply { setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity") },
-                                        "Direct package launcher for core settings."
-                                    ),
-                                    Triple(
-                                        "4. Automotive Settings Overlay",
-                                        Intent("android.settings.car.EXTRA_SETTINGS"),
-                                        "Standard setting UI for Car units."
-                                    ),
-                                    Triple(
-                                        "5. Chinese Headunit Settings (Syu)",
-                                        Intent().apply { setClassName("com.syu.settings", "com.syu.settings.MainActivity") },
-                                        "Bypasses restrictions on MTK/Syu systems."
-                                    )
+                                    BypassOption(1, "1. Standard Settings (Explicit)", "Open standard settings with package filter.") {
+                                        Intent(Settings.ACTION_SETTINGS).apply { setPackage("com.android.settings") }
+                                    },
+                                    BypassOption(2, "2. Standard Accessibility (Explicit)", "Enable VoiceKeyService for steering controls.") {
+                                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply { setPackage("com.android.settings") }
+                                    },
+                                    BypassOption(3, "3. Explicit Main Route", "Direct package launcher for core settings.") {
+                                        Intent().apply { setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity") }
+                                    },
+                                    BypassOption(4, "4. Standard Settings (Implicit)", "Implicit fallback if settings app was renamed.") {
+                                        Intent(Settings.ACTION_SETTINGS)
+                                    },
+                                    BypassOption(5, "5. Standard Accessibility (Implicit)", "Implicit fallback for Accessibility.") {
+                                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                    },
+                                    BypassOption(6, "6. Automotive Settings", "Standard settings UI for car units.") {
+                                        Intent("android.settings.car.EXTRA_SETTINGS")
+                                    },
+                                    BypassOption(7, "7. Syu Chinese Headunit Settings", "Bypasses restrictions on MTK/Syu systems.") {
+                                        Intent().apply { setClassName("com.syu.settings", "com.syu.settings.MainActivity") }
+                                    }
                                 )
                             }
 
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                bypassOptions.forEach { (title, intent, description) ->
-                                    val isSupported = remember(intent) {
+                                bypassOptions.forEach { option ->
+                                    val optionIntent = remember(option) { option.buildIntent() }
+                                    val isSupported = remember(optionIntent) {
                                         try {
-                                            context.packageManager.resolveActivity(intent, 0) != null
+                                            val resolveInfo = context.packageManager.resolveActivity(optionIntent, 0)
+                                            // Make sure it doesn't resolve to YouTube or any web browser catch-all due to ROM restrictions
+                                            resolveInfo != null && 
+                                                    resolveInfo.activityInfo.packageName != "com.google.android.youtube" &&
+                                                    !resolveInfo.activityInfo.packageName.contains("youtube", ignoreCase = true) &&
+                                                    !resolveInfo.activityInfo.packageName.contains("browser", ignoreCase = true) &&
+                                                    !resolveInfo.activityInfo.packageName.contains("chrome", ignoreCase = true)
                                         } catch (e: Exception) {
                                             false
                                         }
                                     }
 
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(CarBlack, RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                try {
-                                                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                                    context.startActivity(intent)
-                                                } catch (e: Exception) {
-                                                    micTestMessage = "Failed to launch $title: ${e.localizedMessage}"
-                                                }
-                                            }
-                                            .padding(10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(0.7f)) {
-                                            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LightText)
-                                            Text(description, fontSize = 9.sp, color = MutedText)
-                                        }
-                                        Text(
-                                            text = if (isSupported) "AVAILABLE" else "NOT FOUND",
-                                            color = if (isSupported) SuccessGreen else Color.Gray,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
+                                    key(option.id) {
+                                        Row(
                                             modifier = Modifier
-                                                .background(
-                                                    if (isSupported) SuccessGreen.copy(alpha = 0.15f) else Color.Gray.copy(alpha = 0.1f),
-                                                    RoundedCornerShape(4.dp)
-                                                )
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
+                                                .fillMaxWidth()
+                                                .background(CarBlack, RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    try {
+                                                        val launchIntent = option.buildIntent().apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                        }
+                                                        val resolve = context.packageManager.resolveActivity(launchIntent, 0)
+                                                        if (resolve != null && (
+                                                            resolve.activityInfo.packageName.contains("youtube", ignoreCase = true) ||
+                                                            resolve.activityInfo.packageName.contains("chrome", ignoreCase = true) ||
+                                                            resolve.activityInfo.packageName.contains("browser", ignoreCase = true)
+                                                        )) {
+                                                            micTestMessage = "Your Ambrane car unit has locked or hidden the Android Settings app. Access settings via the car's default main menu launcher settings button."
+                                                        } else {
+                                                            context.startActivity(launchIntent)
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        micTestMessage = "Failed to launch ${option.title}: ${e.localizedMessage}"
+                                                    }
+                                                }
+                                                .padding(10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(0.7f)) {
+                                                Text(option.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LightText)
+                                                Text(option.description, fontSize = 9.sp, color = MutedText)
+                                            }
+                                            Text(
+                                                text = if (isSupported) "AVAILABLE" else "NOT FOUND",
+                                                color = if (isSupported) SuccessGreen else Color.Gray,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier
+                                                    .background(
+                                                        if (isSupported) SuccessGreen.copy(alpha = 0.15f) else Color.Gray.copy(alpha = 0.1f),
+                                                        RoundedCornerShape(4.dp)
+                                                    )
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
