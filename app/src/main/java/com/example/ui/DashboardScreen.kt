@@ -11,6 +11,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -550,6 +552,9 @@ fun DashboardScreen(
         }
     }
 
+    var micTestState by remember { mutableStateOf("IDLE") } // "IDLE", "RECORDING", "PLAYBACK", "ERROR"
+    var micTestMessage by remember { mutableStateOf("Not tested yet. Use this to verify if the box's mic input is functional.") }
+
     // Advanced Troubleshooting Settings Dialog
     if (showSetupDialog) {
         AlertDialog(
@@ -558,128 +563,249 @@ fun DashboardScreen(
             titleContentColor = LightText,
             textContentColor = LightText,
             title = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.Settings, "Settings", tint = CyanGlow)
-                    Text("Infotainment Setup Helper", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically, 
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.Build, "Diagnostics", tint = CyanGlow, modifier = Modifier.size(24.dp))
+                        Text("System Diagnostics & Helper", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                    IconButton(onClick = { showSetupDialog = false }) {
+                        Icon(Icons.Default.Close, "Close", tint = MutedText)
+                    }
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        "Many custom vehicle platforms like Ambrane override system intents or hide Accessibility menus. Try these buttons sequentially to bypass the locked firmware:",
-                        fontSize = 12.sp,
-                        color = MutedText
-                    )
-                    
-                    // Button 1: Force Direct Settings Activity via Explicit Intent
-                    Button(
-                        onClick = {
-                            try {
-                                val intent = Intent().apply {
-                                    setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity")
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 280.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // --- SECTION 1: MICROPHONE HARDWARE DIAGNOSTICS ---
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = DarkGray),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.SettingsVoice,
+                                    contentDescription = "Mic Test",
+                                    tint = when (micTestState) {
+                                        "RECORDING" -> WarningYellow
+                                        "PLAYBACK" -> SuccessGreen
+                                        else -> CyanGlow
+                                    },
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text("MIC HARDWARE TEST (LOOPBACK)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LightText)
+                            }
+                            
+                            Text(
+                                "Car CarPlay boxes often block microphone input channels. This tool records 3 seconds of raw audio from the mic and plays it back to confirm the hardware connection.",
+                                fontSize = 10.sp,
+                                color = MutedText
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        voiceManager.startMicHardwareTest(
+                                            onRecordStart = {
+                                                micTestState = "RECORDING"
+                                                micTestMessage = "🎤 RECORDING (3s)... Speak loudly into your Brezza's microphone now!"
+                                            },
+                                            onRecordEnd = {
+                                                micTestState = "PROCESSING"
+                                                micTestMessage = "Processing recording buffer..."
+                                            },
+                                            onPlaybackStart = {
+                                                micTestState = "PLAYBACK"
+                                                micTestMessage = "🔊 PLAYING BACK... Listen carefully to see if you hear your own voice."
+                                            },
+                                            onPlaybackEnd = {
+                                                micTestState = "IDLE"
+                                                micTestMessage = "Loopback complete. If you heard your voice, mic hardware is fully working! If silent, your car's USB CarPlay feed is blocking microphone access."
+                                            },
+                                            onError = { err ->
+                                                micTestState = "ERROR"
+                                                micTestMessage = err
+                                            }
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = when (micTestState) {
+                                            "RECORDING" -> WarningYellow
+                                            "PLAYBACK" -> SuccessGreen
+                                            else -> CyanGlow
+                                        },
+                                        contentColor = CarBlack
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    enabled = micTestState == "IDLE" || micTestState == "ERROR",
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text(
+                                        text = when (micTestState) {
+                                            "RECORDING" -> "Recording..."
+                                            "PLAYBACK" -> "Playing..."
+                                            else -> "Start 3s Test Loop"
+                                        },
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                try {
-                                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+                                Text(
+                                    text = when (micTestState) {
+                                        "RECORDING" -> "🔴 LIVE RECORDING"
+                                        "PLAYBACK" -> "🟢 PLAYBACK ACTIVE"
+                                        else -> "READY"
+                                    },
+                                    color = when (micTestState) {
+                                        "RECORDING" -> WarningYellow
+                                        "PLAYBACK" -> SuccessGreen
+                                        else -> MutedText
+                                    },
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(CarBlack, RoundedCornerShape(6.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = micTestMessage,
+                                    color = if (micTestState == "ERROR") WarningYellow else LightText,
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // --- SECTION 2: SETTINGS & BYPASS METHODS ---
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = DarkGray),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Default.Settings, "Bypasses", tint = CyanGlow, modifier = Modifier.size(18.dp))
+                                Text("SYSTEM BYPASS CONTROLS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LightText)
+                            }
+
+                            Text(
+                                "Ambrane boxes run custom, heavily modified Android system firmware. Some settings activities are disabled or removed entirely from the partition. Click a bypass below to search for a route:",
+                                fontSize = 10.sp,
+                                color = MutedText
+                            )
+
+                            val bypassOptions = remember {
+                                listOf(
+                                    Triple(
+                                        "1. Standard Settings",
+                                        Intent(Settings.ACTION_SETTINGS),
+                                        "Open main system configurations."
+                                    ),
+                                    Triple(
+                                        "2. Standard Accessibility",
+                                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                                        "Enable VoiceKeyService for steering controls and ad-skipping."
+                                    ),
+                                    Triple(
+                                        "3. Explicit Main Route",
+                                        Intent().apply { setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity") },
+                                        "Direct package launcher for core settings."
+                                    ),
+                                    Triple(
+                                        "4. Automotive Settings Overlay",
+                                        Intent("android.settings.car.EXTRA_SETTINGS"),
+                                        "Standard setting UI for Car units."
+                                    ),
+                                    Triple(
+                                        "5. Chinese Headunit Settings (Syu)",
+                                        Intent().apply { setClassName("com.syu.settings", "com.syu.settings.MainActivity") },
+                                        "Bypasses restrictions on MTK/Syu systems."
+                                    )
+                                )
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                bypassOptions.forEach { (title, intent, description) ->
+                                    val isSupported = remember(intent) {
+                                        try {
+                                            context.packageManager.resolveActivity(intent, 0) != null
+                                        } catch (e: Exception) {
+                                            false
+                                        }
                                     }
-                                    context.startActivity(intent)
-                                } catch (e2: Exception) {
-                                    // Fallback to standard settings
-                                    try {
-                                        context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
-                                    } catch (e3: Exception) {}
-                                }
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = CyanGlow, contentColor = CarBlack),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("1. Force Direct Accessibility", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
 
-                    // Button 2: Standard Accessibility Settings (Fallback)
-                    Button(
-                        onClick = {
-                            try {
-                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                try {
-                                    context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
-                                } catch (e2: Exception) {}
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("2. Standard Accessibility Intent", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    // Button 3: Automotive Car Settings Specific (For Android Auto/Car OS units)
-                    Button(
-                        onClick = {
-                            try {
-                                val intent = Intent("android.settings.car.EXTRA_SETTINGS").apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                try {
-                                    val intent = Intent().apply {
-                                        setClassName("com.android.car.settings", "com.android.car.settings.Settings\$AccessibilitySettingsActivity")
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(CarBlack, RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                try {
+                                                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                    context.startActivity(intent)
+                                                } catch (e: Exception) {
+                                                    micTestMessage = "Failed to launch $title: ${e.localizedMessage}"
+                                                }
+                                            }
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(0.7f)) {
+                                            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = LightText)
+                                            Text(description, fontSize = 9.sp, color = MutedText)
+                                        }
+                                        Text(
+                                            text = if (isSupported) "AVAILABLE" else "NOT FOUND",
+                                            color = if (isSupported) SuccessGreen else Color.Gray,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier
+                                                .background(
+                                                    if (isSupported) SuccessGreen.copy(alpha = 0.15f) else Color.Gray.copy(alpha = 0.1f),
+                                                    RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
                                     }
-                                    context.startActivity(intent)
-                                } catch (e2: Exception) {
-                                    try {
-                                        context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
-                                    } catch (e3: Exception) {}
                                 }
                             }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("3. Automotive Settings Fallback", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    // Button 4: General Settings Intent
-                    Button(
-                        onClick = {
-                            try {
-                                val intent = Intent(Settings.ACTION_SETTINGS).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {}
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkGray, contentColor = LightText),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("4. Open Standard Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     Divider(color = DarkGray, thickness = 1.dp)
 
                     Text(
-                        "Note: Once inside, activate 'VoiceKeyService' to allow steering wheel buttons and YouTube ad-skipping integration.",
-                        fontSize = 11.sp,
-                        color = WarningYellow
+                        "Note: If all setting bypasses show [NOT FOUND], accessibility services are fully locked out by the Ambrane manufacturer. Use the onscreen Voice button and typed-input fallback instead.",
+                        fontSize = 10.sp,
+                        color = WarningYellow,
+                        lineHeight = 13.sp
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showSetupDialog = false }) {
-                    Text("Done", color = CyanGlow, fontWeight = FontWeight.Bold)
+                    Text("Close", color = CyanGlow, fontWeight = FontWeight.Bold)
                 }
             }
         )

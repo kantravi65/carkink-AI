@@ -252,9 +252,89 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
+    private var mediaRecorder: android.media.MediaRecorder? = null
+    private var mediaPlayer: android.media.MediaPlayer? = null
+
+    fun startMicHardwareTest(
+        onRecordStart: () -> Unit,
+        onRecordEnd: () -> Unit,
+        onPlaybackStart: () -> Unit,
+        onPlaybackEnd: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val audioFile = java.io.File(context.cacheDir, "mic_test_record.3gp")
+        
+        Handler(Looper.getMainLooper()).post {
+            try {
+                // Stop any current action
+                mediaRecorder?.release()
+                mediaRecorder = null
+                mediaPlayer?.release()
+                mediaPlayer = null
+                
+                // Set up recorder
+                @Suppress("DEPRECATION")
+                mediaRecorder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    android.media.MediaRecorder(context)
+                } else {
+                    android.media.MediaRecorder()
+                }.apply {
+                    setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                    setOutputFormat(android.media.MediaRecorder.OutputFormat.THREE_GPP)
+                    setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AMR_NB)
+                    setOutputFile(audioFile.absolutePath)
+                    prepare()
+                    start()
+                }
+                
+                onRecordStart()
+                
+                // Record for 3 seconds, then stop and playback
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        mediaRecorder?.stop()
+                        mediaRecorder?.release()
+                        mediaRecorder = null
+                        
+                        onRecordEnd()
+                        
+                        // Playback
+                        mediaPlayer = android.media.MediaPlayer().apply {
+                            setDataSource(audioFile.absolutePath)
+                            prepare()
+                            setOnCompletionListener {
+                                it.release()
+                                mediaPlayer = null
+                                onPlaybackEnd()
+                            }
+                            start()
+                        }
+                        onPlaybackStart()
+                        
+                    } catch (e: Exception) {
+                        Log.e(TAG, "MediaRecorder stop/MediaPlayer play error", e)
+                        onError("Hardware error: ${e.localizedMessage}. The box might have blocked mic recording access.")
+                    }
+                }, 3000)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "MediaRecorder start error", e)
+                onError("Hardware record failed: ${e.localizedMessage}. Check if another app is holding the mic.")
+            }
+        }
+    }
+
     fun destroy() {
         Handler(Looper.getMainLooper()).post {
             abandonAudioFocus()
+            try {
+                mediaRecorder?.release()
+                mediaRecorder = null
+            } catch (e: Throwable) {}
+            try {
+                mediaPlayer?.release()
+                mediaPlayer = null
+            } catch (e: Throwable) {}
             try {
                 tts?.stop()
                 tts?.shutdown()
