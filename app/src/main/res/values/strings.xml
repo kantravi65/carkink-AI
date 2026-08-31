@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">CarLink Gemini</string>
+    <string name="accessibility_desc">Enables steering wheel voice button interception for CarLink Assistant.</string>
+</resources>

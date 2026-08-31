@@ -1,0 +1,6 @@
+{
+  "name": "CarLink Gemini",
+  "description": "Voice-controlled Gemini assistant for Ambrane Car Link Stream, featuring smart navigation, YouTube media controls, and hands-free driving integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
