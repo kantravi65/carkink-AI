@@ -559,8 +559,8 @@ fun DashboardScreen(
     var micTestMessage by remember { mutableStateOf("Not tested yet. Use this to verify if the box's mic input is functional.") }
 
     val updateManager = remember { UpdateManager(context) }
-    var githubOwner by remember { mutableStateOf("kantravi65") }
-    var githubRepo by remember { mutableStateOf("BrezzaCarLink") }
+    val githubOwner = "kantravi65"
+    val githubRepo = "carkink-AI"
     val currentVersion = remember {
         try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -821,44 +821,10 @@ fun DashboardScreen(
                             }
 
                             Text(
-                                "Check for updates and download new versions of BrezzaCarLink directly from GitHub.",
+                                "Check for updates and download new versions of BrezzaCarLink directly from $githubOwner/$githubRepo.",
                                 fontSize = 10.sp,
                                 color = MutedText
                             )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = githubOwner,
-                                    onValueChange = { githubOwner = it },
-                                    label = { Text("Owner", fontSize = 8.sp) },
-                                    singleLine = true,
-                                    textStyle = TextStyle(fontSize = 11.sp, color = LightText),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = CyanGlow,
-                                        unfocusedBorderColor = Color.Gray,
-                                        focusedLabelColor = CyanGlow,
-                                        unfocusedLabelColor = MutedText
-                                    ),
-                                    modifier = Modifier.weight(1f).height(46.dp)
-                                )
-                                OutlinedTextField(
-                                    value = githubRepo,
-                                    onValueChange = { githubRepo = it },
-                                    label = { Text("Repo", fontSize = 8.sp) },
-                                    singleLine = true,
-                                    textStyle = TextStyle(fontSize = 11.sp, color = LightText),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = CyanGlow,
-                                        unfocusedBorderColor = Color.Gray,
-                                        focusedLabelColor = CyanGlow,
-                                        unfocusedLabelColor = MutedText
-                                    ),
-                                    modifier = Modifier.weight(1f).height(46.dp)
-                                )
-                            }
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -908,7 +874,7 @@ fun DashboardScreen(
                                 updateManager.errorMessage.isNotEmpty() -> updateManager.errorMessage
                                 updateManager.state == UpdateState.UPDATE_AVAILABLE -> "Latest: ${updateManager.latestVersionName}\n\nChangelog:\n${updateManager.changeLog}"
                                 updateManager.state == UpdateState.UP_TO_DATE -> "You are running the latest version!"
-                                else -> "Configure owner/repo and check for updates."
+                                else -> "Click 'Check Updates' below to check for updates from $githubOwner/$githubRepo."
                             }
 
                             Box(
