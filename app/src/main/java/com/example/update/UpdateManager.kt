@@ -187,7 +187,7 @@ class UpdateManager(private val context: Context) {
     }
 
     private fun fetchLatestReleaseInfo(owner: String, repo: String): Triple<String, String, String>? {
-        val apiUrl = "https://api.github.com/repos/$owner/$repo/releases/latest"
+        val apiUrl = "https://api.github.com/repos/$owner/$repo/releases"
         var connection: HttpURLConnection? = null
         try {
             val url = URL(apiUrl)
