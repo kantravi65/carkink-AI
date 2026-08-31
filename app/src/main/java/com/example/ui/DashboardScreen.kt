@@ -37,6 +37,9 @@ import com.example.voice.LocalCommandParser
 import com.example.media.MediaManager
 import com.example.navigation.NavigationManager
 import com.example.voice.VoiceManager
+import com.example.update.UpdateManager
+import com.example.update.UpdateManager.UpdateState
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -555,6 +558,18 @@ fun DashboardScreen(
     var micTestState by remember { mutableStateOf("IDLE") } // "IDLE", "RECORDING", "PLAYBACK", "ERROR"
     var micTestMessage by remember { mutableStateOf("Not tested yet. Use this to verify if the box's mic input is functional.") }
 
+    val updateManager = remember { UpdateManager(context) }
+    var githubOwner by remember { mutableStateOf("kantravi65") }
+    var githubRepo by remember { mutableStateOf("BrezzaCarLink") }
+    val currentVersion = remember {
+        try {
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            packageInfo.versionName ?: "1.0.0"
+        } catch (e: Exception) {
+            "1.0.0"
+        }
+    }
+
     // Advanced Troubleshooting Settings Dialog
     if (showSetupDialog) {
         AlertDialog(
@@ -787,6 +802,175 @@ fun DashboardScreen(
                                                 )
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- SECTION 3: GITHUB IN-APP UPDATE SYSTEM ---
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = DarkGray),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Default.Refresh, "Update", tint = CyanGlow, modifier = Modifier.size(18.dp))
+                                Text("GITHUB IN-APP UPDATE SYSTEM", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LightText)
+                            }
+
+                            Text(
+                                "Check for updates and download new versions of BrezzaCarLink directly from GitHub.",
+                                fontSize = 10.sp,
+                                color = MutedText
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = githubOwner,
+                                    onValueChange = { githubOwner = it },
+                                    label = { Text("Owner", fontSize = 8.sp) },
+                                    singleLine = true,
+                                    textStyle = TextStyle(fontSize = 11.sp, color = LightText),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = CyanGlow,
+                                        unfocusedBorderColor = Color.Gray,
+                                        focusedLabelColor = CyanGlow,
+                                        unfocusedLabelColor = MutedText
+                                    ),
+                                    modifier = Modifier.weight(1f).height(46.dp)
+                                )
+                                OutlinedTextField(
+                                    value = githubRepo,
+                                    onValueChange = { githubRepo = it },
+                                    label = { Text("Repo", fontSize = 8.sp) },
+                                    singleLine = true,
+                                    textStyle = TextStyle(fontSize = 11.sp, color = LightText),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = CyanGlow,
+                                        unfocusedBorderColor = Color.Gray,
+                                        focusedLabelColor = CyanGlow,
+                                        unfocusedLabelColor = MutedText
+                                    ),
+                                    modifier = Modifier.weight(1f).height(46.dp)
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Current Version: $currentVersion",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = LightText
+                                )
+
+                                val stateLabel = when (updateManager.state) {
+                                    UpdateState.IDLE -> "READY"
+                                    UpdateState.CHECKING -> "CHECKING..."
+                                    UpdateState.UP_TO_DATE -> "UP TO DATE"
+                                    UpdateState.UPDATE_AVAILABLE -> "UPDATE AVAILABLE!"
+                                    UpdateState.DOWNLOADING -> "DOWNLOADING (${(updateManager.downloadProgress * 100).toInt()}%)"
+                                    UpdateState.DOWNLOADED -> "DOWNLOADED"
+                                    UpdateState.ERROR -> "ERROR"
+                                }
+
+                                Text(
+                                    text = stateLabel,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when (updateManager.state) {
+                                        UpdateState.UPDATE_AVAILABLE -> WarningYellow
+                                        UpdateState.DOWNLOADED, UpdateState.UP_TO_DATE -> SuccessGreen
+                                        UpdateState.ERROR -> Color.Red
+                                        else -> CyanGlow
+                                    }
+                                )
+                            }
+
+                            if (updateManager.state == UpdateState.DOWNLOADING) {
+                                LinearProgressIndicator(
+                                    progress = { updateManager.downloadProgress },
+                                    color = CyanGlow,
+                                    trackColor = Color.Gray.copy(alpha = 0.3f),
+                                    modifier = Modifier.fillMaxWidth().height(4.dp)
+                                )
+                            }
+
+                            val consoleText = when {
+                                updateManager.errorMessage.isNotEmpty() -> updateManager.errorMessage
+                                updateManager.state == UpdateState.UPDATE_AVAILABLE -> "Latest: ${updateManager.latestVersionName}\n\nChangelog:\n${updateManager.changeLog}"
+                                updateManager.state == UpdateState.UP_TO_DATE -> "You are running the latest version!"
+                                else -> "Configure owner/repo and check for updates."
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 120.dp)
+                                    .background(CarBlack, RoundedCornerShape(6.dp))
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = consoleText,
+                                    color = when {
+                                        updateManager.errorMessage.isNotEmpty() -> Color.Red
+                                        updateManager.state == UpdateState.UPDATE_AVAILABLE -> WarningYellow
+                                        else -> LightText
+                                    },
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        updateManager.checkForUpdates(githubOwner, githubRepo, currentVersion)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CyanGlow, contentColor = CarBlack),
+                                    shape = RoundedCornerShape(8.dp),
+                                    enabled = updateManager.state != UpdateState.CHECKING && updateManager.state != UpdateState.DOWNLOADING,
+                                    modifier = Modifier.weight(1f).height(36.dp)
+                                ) {
+                                    Text("Check Updates", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                if (updateManager.state == UpdateState.UPDATE_AVAILABLE) {
+                                    Button(
+                                        onClick = {
+                                            updateManager.startUpdateDownload()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen, contentColor = CarBlack),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1.5f).height(36.dp)
+                                    ) {
+                                        Text("Download & Install", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                } else if (updateManager.state == UpdateState.DOWNLOADED) {
+                                    Button(
+                                        onClick = {
+                                            val apkFile = File(context.cacheDir, "updates/update.apk")
+                                            if (apkFile.exists()) {
+                                                updateManager.installApk(apkFile)
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen, contentColor = CarBlack),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1.5f).height(36.dp)
+                                    ) {
+                                        Text("Install Now", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
